@@ -1,0 +1,272 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum Role {
+  PATIENT
+  DOCTOR
+  ASSISTANT
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum TreatmentType {
+  ALLOPATHIC
+  HOMEOPATHIC
+  HERBAL
+}
+
+enum AppointmentStatus {
+  PENDING
+  PAYMENT_UPLOADED
+  PAYMENT_VERIFIED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+// ============================================================================
+// MODELS
+// ============================================================================
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  password         String
+  role             Role
+  isActive         Boolean   @default(true)
+  resetTokenHash   String?
+  resetTokenExp    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  patient          Patient?
+  doctor           Doctor?
+  assistant        Assistant?
+  adminLogs        AdminLog[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Patient {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  fullName         String
+  phone            String?
+  dob              DateTime? @db.Date
+  gender           String?
+  address          String?
+  profilePic       String?
+  createdAt        DateTime  @default(now())
+
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments     Appointment[]
+  medicalHistories MedicalHistory[]
+
+  @@index([userId])
+}
+
+model Doctor {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  fullName         String
+  phone            String?
+  specialization   String
+  treatmentTypes   TreatmentType[]
+  diseases         String[]
+  qualifications   String[]
+  experience       Int
+  bio              String?
+  profilePic       String?
+  certificates     String[]
+  isApproved       Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assistants       Assistant[]
+  clinics          Clinic[]
+  schedules        Schedule[]
+  blockedDates     BlockedDate[]
+  appointments     Appointment[]
+  prescriptions    Prescription[]
+  medicalHistories MedicalHistory[]
+
+  @@index([userId])
+  @@index([isApproved])
+  @@index([specialization])
+}
+
+model Assistant {
+  id               String    @id @default(cuid())
+  userId           String    @unique
+  fullName         String
+  doctorId         String
+  createdAt        DateTime  @default(now())
+
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  doctor           Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  paymentsVerified Payment[] @relation("verifiedByAssistant")
+
+  @@index([userId])
+  @@index([doctorId])
+}
+
+model Clinic {
+  id               String    @id @default(cuid())
+  doctorId         String
+  name             String
+  address          String
+  city             String
+  phone            String?
+  fee              Float
+  isActive         Boolean   @default(true)
+
+  doctor           Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  schedules        Schedule[]
+  appointments     Appointment[]
+
+  @@index([doctorId])
+  @@index([isActive])
+}
+
+model Schedule {
+  id               String    @id @default(cuid())
+  doctorId         String
+  clinicId         String
+  dayOfWeek        Int
+  startTime        String
+  endTime          String
+  slotMinutes      Int       @default(30)
+  maxPerSlot       Int       @default(1)
+
+  doctor           Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic           Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@unique([clinicId, dayOfWeek])
+  @@index([doctorId])
+}
+
+model BlockedDate {
+  id               String    @id @default(cuid())
+  doctorId         String
+  date             DateTime  @db.Date
+  reason           String?
+
+  doctor           Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, date])
+  @@index([doctorId])
+}
+
+model Appointment {
+  id               String    @id @default(cuid())
+  patientId        String
+  doctorId         String
+  clinicId         String
+  dateTime         DateTime
+  status           AppointmentStatus @default(PENDING)
+  patientNotes     String?
+  cancelReason     String?
+  cancelledBy      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  patient          Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor           Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  clinic           Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  payment          Payment?
+  prescription     Prescription?
+  medicalHistory   MedicalHistory?
+
+  @@unique([doctorId, clinicId, dateTime])
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([clinicId])
+  @@index([status])
+  @@index([dateTime])
+}
+
+model Payment {
+  id               String    @id @default(cuid())
+  appointmentId    String    @unique
+  screenshotUrl    String
+  amount           Float
+  status           PaymentStatus @default(PENDING)
+  verifiedById     String?
+  rejectionReason  String?
+  createdAt        DateTime  @default(now())
+
+  appointment      Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  verifiedBy       Assistant?  @relation("verifiedByAssistant", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId])
+  @@index([status])
+  @@index([verifiedById])
+}
+
+model Prescription {
+  id               String    @id @default(cuid())
+  appointmentId    String    @unique
+  doctorId         String
+  medicines        Json
+  instructions     String?
+  followUpDate     DateTime? @db.Date
+  createdAt        DateTime  @default(now())
+
+  appointment      Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  doctor           Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId])
+  @@index([doctorId])
+}
+
+model MedicalHistory {
+  id               String    @id @default(cuid())
+  patientId        String
+  appointmentId    String?   @unique
+  diagnosis        String
+  doctorNotes      String?
+  addedByDoctor    String
+  createdAt        DateTime  @default(now())
+
+  patient          Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment      Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  doctor           Doctor    @relation(fields: [addedByDoctor], references: [id], onDelete: Restrict)
+
+  @@index([patientId])
+  @@index([appointmentId])
+}
+
+model AdminLog {
+  id               String    @id @default(cuid())
+  userId           String
+  action           String
+  targetId         String?
+  details          Json?
+  createdAt        DateTime  @default(now())
+
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+}
