@@ -1,5 +1,16 @@
 # DoctorHub API Routes Documentation
 
+## 🔐 Authentication & Authorization
+
+All routes are protected by Next.js middleware (`middleware.ts`) which:
+- Validates JWT tokens from HTTP-only cookies
+- Enforces role-based access control (RBAC)
+- Returns 401 for unauthenticated API requests
+- Returns 403 for unauthorized role access
+- Redirects pages to `/login` or `/unauthorized`
+
+See `MIDDLEWARE.md` for complete middleware documentation.
+
 ## ✅ IMPLEMENTED ROUTES
 
 ### Authentication Routes (6 endpoints)

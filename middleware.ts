@@ -1,44 +1,102 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken } from '@/lib/jwt';
-import { getAuthCookie } from '@/lib/cookies';
 
-const publicRoutes = ['/login', '/register', '/forgot-password', '/reset-password'];
-const protectedRoutes = ['/api/auth/me', '/api/auth/logout'];
+const COOKIE_NAME = 'doctor_hub_token';
+
+// Role-based route access control
+const ROLE_ROUTES: Record<string, string[]> = {
+  '/patient': ['PATIENT'],
+  '/doctor': ['DOCTOR'],
+  '/assistant': ['ASSISTANT'],
+  '/admin': ['ADMIN', 'SUPER_ADMIN'],
+  '/super-admin': ['SUPER_ADMIN'],
+};
+
+// Public routes that don't require authentication
+const PUBLIC_ROUTES = [
+  '/',
+  '/login',
+  '/register',
+  '/forgot-password',
+  '/reset-password',
+  '/unauthorized',
+];
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  const isPublicRoute = publicRoutes.some(route => pathname.startsWith(route));
-  const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
 
-  if (isProtectedRoute) {
-    const token = await getAuthCookie();
-    if (!token) {
-      return NextResponse.redirect(new URL('/login', request.url));
-    }
-
-    const payload = await verifyToken(token);
-    if (!payload) {
-      return NextResponse.redirect(new URL('/login', request.url));
-    }
-  }
+  // Check if route is public
+  const isPublicRoute =
+    PUBLIC_ROUTES.includes(pathname) || pathname.startsWith('/api/auth/');
 
   if (isPublicRoute) {
-    const token = await getAuthCookie();
-    if (token && await verifyToken(token)) {
-      return NextResponse.redirect(new URL('/dashboard', request.url));
+    return NextResponse.next();
+  }
+
+  // Get JWT token from cookies
+  const token = request.cookies.get(COOKIE_NAME)?.value;
+
+  // No token - redirect to login or return 401 for API routes
+  if (!token) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+    return NextResponse.redirect(
+      new URL(`/login?returnUrl=${pathname}`, request.url)
+    );
+  }
+
+  // Verify token
+  const payload = await verifyToken(token);
+
+  // Invalid or expired token
+  if (!payload) {
+    const response = pathname.startsWith('/api/')
+      ? NextResponse.json(
+          { error: 'Authentication required' },
+          { status: 401 }
+        )
+      : NextResponse.redirect(new URL('/login', request.url));
+
+    // Clear invalid cookie
+    response.cookies.delete(COOKIE_NAME);
+    return response;
+  }
+
+  // Check role-based access
+  for (const [routePrefix, allowedRoles] of Object.entries(ROLE_ROUTES)) {
+    if (pathname.startsWith(routePrefix)) {
+      if (!allowedRoles.includes(payload.role)) {
+        // User doesn't have required role
+        if (pathname.startsWith('/api/')) {
+          return NextResponse.json(
+            { error: 'Forbidden. Insufficient permissions.' },
+            { status: 403 }
+          );
+        }
+        return NextResponse.redirect(new URL('/unauthorized', request.url));
+      }
     }
   }
 
-  return NextResponse.next();
+  // Add user info to request headers for route handlers
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-user-id', payload.userId);
+  requestHeaders.set('x-user-email', payload.email);
+  requestHeaders.set('x-user-role', payload.role);
+
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 }
 
 export const config = {
   matcher: [
-    '/login',
-    '/register',
-    '/forgot-password',
-    '/reset-password',
-    '/api/auth/:path*',
-    '/dashboard/:path*',
+    '/((?!_next/static|_next/image|favicon.ico|public/).*)',
   ],
 };
